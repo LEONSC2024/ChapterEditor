@@ -86,7 +86,3 @@ _chapters.txt / _chapters.xml	临时章节文件（自动删除）
 
 作者：LEONSC2024
 项目地址：https://github.com/LEONSC2024/ChapterEditor
-
-
-是否希望我帮你增加一个 徽章区块（Badges）？
-例如显示 Python 版本、License、系统兼容性、小图标那种 GitHub 常见风格。
