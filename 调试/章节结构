@@ -1,0 +1,40 @@
+import os
+from PyQt5.QtCore import QObject, pyqtSignal
+
+class Chapters(QObject):
+    chapters_changed = pyqtSignal()
+
+    def __init__(self, video_path=None):
+        super().__init__()
+        self.video_path = video_path
+        self.chapters = []  # list of tuples (time, name)
+
+    def set_video_path(self, path):
+        self.video_path = path
+        self.chapters = []
+        self.chapters_changed.emit()
+
+    def add_chapter(self, time, name):
+        self.chapters.append((time, name))
+        self.chapters.sort(key=lambda x: x[0])
+        self.generate_chapter_txt()
+        self.chapters_changed.emit()
+
+    def delete_chapter(self, index):
+        if 0 <= index < len(self.chapters):
+            del self.chapters[index]
+            self.generate_chapter_txt()
+            self.chapters_changed.emit()
+
+    def generate_chapter_txt(self):
+        if not self.video_path:
+            return
+        base, _ = os.path.splitext(self.video_path)
+        txt_path = base + ".txt"
+        lines = []
+        for i, (time, name) in enumerate(self.chapters, start=1):
+            idx = f"{i:02d}"
+            lines.append(f"CHAPTER{idx}={time}")
+            lines.append(f"CHAPTER{idx}NAME={name}")
+        with open(txt_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines))
