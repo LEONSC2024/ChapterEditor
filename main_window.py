@@ -426,14 +426,14 @@ QSlider::add-page:horizontal {
 """
 import os
 import subprocess
-import json
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
-    QFileDialog, QComboBox, QListWidget, QMessageBox, QSplitter, QSlider
+    QFileDialog, QComboBox, QListWidget, QMessageBox, QSplitter, QSlider, QInputDialog, QMenu
 )
 from PySide6.QtCore import Qt, QTimer
 from video_player import VideoPlayer
 from mp4_writer import write_chapters
+from chapter_manager import ChapterManager
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -443,9 +443,11 @@ class MainWindow(QMainWindow):
         self.setAcceptDrops(True)
 
         self.video_path = None
-        self.previous_video_path = None  # 记录上一个视频路径
-        self.chapters = []
         self.is_slider_dragging = False
+        
+        # 使用新的章节管理器
+        self.chapter_manager = ChapterManager()
+        self.chapter_manager.chapters_changed.connect(self.on_chapters_changed)
 
         self.setup_ui()
         self.set_theme("深灰")
@@ -490,25 +492,28 @@ class MainWindow(QMainWindow):
         self.forward_button.clicked.connect(lambda: self.video_player.seek_relative(10))
         control_layout.addWidget(self.forward_button)
 
+        # 倍速控制 - 点击弹出菜单
         self.speed_label = QLabel("倍速：")
-        self.speed_box = QComboBox()
-        self.speed_box.addItems(["1.0x", "1.25x", "1.5x", "2.0x", "3.0x", "4.0x"])
-        self.speed_box.currentTextChanged.connect(self.change_speed)
+        self.current_speed = "1.0x"
+        self.speed_button = QPushButton(self.current_speed)
+        self.speed_button.setStyleSheet("font-weight: bold; color: #3a99fc; min-width: 50px;")
+        self.speed_button.clicked.connect(self.show_speed_menu)
         control_layout.addWidget(self.speed_label)
-        control_layout.addWidget(self.speed_box)
+        control_layout.addWidget(self.speed_button)
 
-        # 主题切换
-        self.theme_label = QLabel("主题：")
-        self.theme_box = QComboBox()
-        self.theme_box.addItems(["深灰", "浅白"])
-        self.theme_box.currentTextChanged.connect(self.set_theme)
-        control_layout.addWidget(self.theme_label)
-        control_layout.addWidget(self.theme_box)
+        # 主题切换 - 改为点击按钮
+        self.current_theme = "深灰"
+        self.theme_button = QPushButton("🌙 深色")
+        self.theme_button.clicked.connect(self.toggle_theme)
+        control_layout.addWidget(self.theme_button)
 
         self.save_button = QPushButton("💾 保存章节到视频")
         self.save_button.clicked.connect(self.save_chapters_to_video)
         control_layout.addWidget(self.save_button)
         control_layout.addStretch()
+
+        # 倍速选项列表（用于弹出菜单）
+        self.speed_options = ["1.0x", "1.25x", "1.5x", "2.0x", "3.0x", "4.0x"]
 
         video_layout = QVBoxLayout()
         video_layout.addWidget(self.video_player)
@@ -530,6 +535,8 @@ class MainWindow(QMainWindow):
         self.chapter_list = QListWidget()
         self.chapter_list.setSelectionMode(QListWidget.ExtendedSelection)  # 启用多选
         self.chapter_list.itemDoubleClicked.connect(self.jump_to_chapter)
+        self.chapter_list.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.chapter_list.customContextMenuRequested.connect(self.show_chapter_context_menu)
         chapter_layout.addWidget(self.chapter_list, stretch=1)
 
         btn_layout = QHBoxLayout()
@@ -561,10 +568,10 @@ class MainWindow(QMainWindow):
 
         # 进度条样式已在主题中定义，无需重复设置
 
-        # 定时器同步进度条
+        # 定时器同步进度条 - 降低更新频率以提升性能
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.update_progress)
-        self.timer.start(500)
+        self.timer.start(200)  # 从500ms改为200ms，提升响应性但不过于频繁
 
     # ===== 快捷键支持 =====
     def keyPressEvent(self, event):
@@ -615,89 +622,19 @@ class MainWindow(QMainWindow):
             self.safe_set_status(f"播放失败: {e}")
 
     def set_theme(self, theme_name):
-        # QComboBox 样式表（深灰/浅白），统一渲染，去除选中项勾选符号，文字靠左，设置宽度和下拉项高度
+        # 简化的主题设置
         if theme_name == "深灰":
             self.setStyleSheet(DARK_THEME)
-            combo_style = """
-            QComboBox {
-                padding-left: 10px;
-                border-radius: 6px;
-                background: #2d3136;
-                color: #e0e0e0;
-                border: 1px solid #444;
-                min-height: 28px;
-                min-width: 40px;
-            }
-            QComboBox::drop-down {
-                border: none;
-            }
-            QComboBox QAbstractItemView {
-                background: #2d3136;
-                color: #e0e0e0;
-                border-radius: 6px;
-                selection-background-color: #3a99fc;
-                selection-color: #fff;
-            }
-            QComboBox::item:selected:!hover {
-                /* 不显示勾选符号 */
-            }
-            QComboBox QAbstractItemView::item:selected::indicator {
-                width: 0px;
-                height: 0px;
-            }
-            QComboBox QAbstractItemView::item {
-                padding-left: 6px;
-                min-height: 24px;
-            }
-            """
         else:
             self.setStyleSheet(LIGHT_THEME)
-            combo_style = """
-            QComboBox {
-                padding-left: 6px;
-                border-radius: 6px;
-                background: #fff;
-                color: #222;
-                border: 1px solid #d3d3d3;
-                min-height: 28px;
-                min-width: 80px;
-            }
-            QComboBox::drop-down {
-                border: none;
-            }
-            QComboBox QAbstractItemView {
-                background: #fff;
-                color: #222;
-                border-radius: 6px;
-                selection-background-color: #3a99fc;
-                selection-color: #fff;
-            }
-            QComboBox::item:selected:!hover {
-                /* 不显示勾选符号 */
-            }
-            QComboBox QAbstractItemView::item:selected::indicator {
-                width: 0px;
-                height: 0px;
-            }
-            QComboBox QAbstractItemView::item {
-                padding-left: 6px;
-                min-height: 24px;
-            }
-            """
-        # 动态调整 QComboBox 的样式
-        self.speed_box.setStyleSheet(combo_style)
-        self.theme_box.setStyleSheet(combo_style)
+        
+        # 更新倍速按钮主题样式
+        self.update_speed_button_theme()
 
     def closeEvent(self, event):
-        if self.video_path:
-            base_name = os.path.splitext(os.path.basename(self.video_path))[0]
-            txt_path = os.path.join(os.path.dirname(self.video_path), f"{base_name}_chapters.txt")
-            try:
-                if os.path.exists(txt_path):
-                    os.remove(txt_path)
-                    print(f"已删除章节文件: {txt_path}")
-            except Exception as e:
-                print(f"删除章节文件失败: {e}")
+        # 清理临时文件
+        if self.chapter_manager:
+            self.chapter_manager.clear_previous_files()
         super().closeEvent(event)
 
     def safe_set_status(self, text):
@@ -705,13 +642,58 @@ class MainWindow(QMainWindow):
         if hasattr(self, "status_label") and self.status_label and not sip_is_deleted(self.status_label):
             QTimer.singleShot(0, lambda: self.status_label.setText(text))
 
-    def change_speed(self, text):
+    def show_speed_menu(self):
+        """显示倍速选择菜单"""
+        menu = QMenu(self)
+        
+        for speed in self.speed_options:
+            action = menu.addAction(speed)
+            action.setCheckable(True)
+            action.setChecked(speed == self.current_speed)
+            action.triggered.connect(lambda checked, s=speed: self.set_speed(s))
+        
+        # 在按钮下方显示菜单
+        button_pos = self.speed_button.mapToGlobal(self.speed_button.rect().bottomLeft())
+        menu.exec(button_pos)
+
+    def set_speed(self, speed_text):
+        """设置播放倍速"""
         try:
-            speed = float(text.replace('x', ''))
+            # 更新显示
+            self.current_speed = speed_text
+            self.speed_button.setText(speed_text)
+            
+            # 设置播放器倍速
+            speed = float(speed_text.replace('x', ''))
             self.video_player.player.setPlaybackRate(speed)
             self.safe_set_status(f"倍速已设置为 {speed}x")
         except Exception as e:
             self.safe_set_status(f"设置倍速失败: {e}")
+
+    def toggle_theme(self):
+        """切换主题"""
+        if self.current_theme == "深灰":
+            self.current_theme = "浅白"
+            self.theme_button.setText("☀️ 浅色")
+            self.set_theme("浅白")
+        else:
+            self.current_theme = "深灰"
+            self.theme_button.setText("🌙 深色")
+            self.set_theme("深灰")
+        
+        # 更新倍速按钮样式以适应新主题
+        self.update_speed_button_theme()
+
+    def update_speed_button_theme(self):
+        """更新倍速按钮的主题样式"""
+        if self.current_theme == "深灰":
+            self.speed_button.setStyleSheet("font-weight: bold; color: #3a99fc; min-width: 50px;")
+        else:
+            self.speed_button.setStyleSheet("font-weight: bold; color: #3a99fc; min-width: 50px;")
+
+    def change_speed(self, text):
+        """保持兼容性的旧方法"""
+        self.set_speed(text)
 
     # ===== 打开视频 =====
     def open_video(self):
@@ -738,20 +720,8 @@ class MainWindow(QMainWindow):
         if not self.check_path_permission(file_path):
             return
 
-        # 删除上一个视频的 TXT
-        if self.previous_video_path:
-            old_base = os.path.splitext(os.path.basename(self.previous_video_path))[0]
-            old_dir = os.path.dirname(self.previous_video_path)
-            old_txt = os.path.join(old_dir, f"{old_base}_chapters.txt")
-            if os.path.isfile(old_txt):
-                try:
-                    os.remove(old_txt)
-                    print(f"已删除旧章节文件: {old_txt}")
-                except Exception as e:
-                    print(f"删除旧章节文件失败: {e}")
-
-        # 更新路径
-        self.previous_video_path = file_path
+        # 设置新的视频路径到章节管理器
+        self.chapter_manager.set_video_path(file_path)
         self.video_path = file_path
         self.video_player.load_video(file_path)
 
@@ -768,43 +738,17 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(f"🎬 {video_title}")
         self.safe_set_status(f"已加载：{os.path.basename(file_path)}")
         self.video_player.player.durationChanged.connect(self.update_total_time)
-        if not self.load_chapters_from_video(file_path):
-            self.load_chapters_from_txt(file_path)
+        
+        # 尝试从视频或TXT文件加载章节
+        if not self.chapter_manager.load_from_video(file_path):
+            base_name = os.path.splitext(os.path.basename(file_path))[0]
+            txt_path = os.path.join(os.path.dirname(file_path), f"{base_name}_chapters.txt")
+            if not self.chapter_manager.load_from_txt(txt_path):
+                # 如果视频没有章节且没有对应的TXT文件，确保显示空列表
+                self.update_chapter_display()
 
     # ===== 从视频读取章节 =====
-    def load_chapters_from_video(self, video_path):
-        try:
-            cmd = ["ffprobe", "-v", "error", "-print_format", "json", "-show_chapters", video_path]
-            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-            data = json.loads(result.stdout)
-            chapters = data.get("chapters", [])
 
-            if not chapters:
-                return False
-
-            self.chapters.clear()
-            self.chapter_list.clear()
-            # 先读取所有章节
-            temp_chapters = []
-            for idx, ch in enumerate(chapters, start=1):
-                start_time = float(ch.get("start_time", 0))
-                ms = int(start_time * 1000)
-                name = ch.get("tags", {}).get("title", f"Chapter {idx}")
-                temp_chapters.append({"name": name, "time_ms": ms})
-            # 按时间升序排序
-            temp_chapters.sort(key=lambda c: c["time_ms"])
-            self.chapters = temp_chapters
-            # 显示时用顺序编号
-            for idx, c in enumerate(self.chapters, start=1):
-                display_time = self.ms_to_chapter_time(c["time_ms"])
-                self.chapter_list.addItem(f"{idx:02}. {display_time} - {c['name']}")
-
-            self.update_chapters_txt()
-            # self.export_chapters_to_xml()  # 不再导入视频时生成XML文件
-            return True
-        except Exception as e:
-            self.safe_set_status(f"读取视频章节失败: {e}")
-            return False
 
     def export_chapters_to_xml(self):
         """
@@ -851,136 +795,105 @@ class MainWindow(QMainWindow):
         except Exception as e:
             self.safe_set_status(f"生成XML章节文件失败: {e}")
 
-    # ===== 以下其他方法保持原逻辑 =====
-    def load_chapters_from_txt(self, video_path):
-        base_name = os.path.splitext(os.path.basename(video_path))[0]
-        txt_path = os.path.join(os.path.dirname(video_path), f"{base_name}_chapters.txt")
-        self.chapters.clear()
+
+
+    def update_chapter_display(self):
+        """更新章节显示列表"""
         self.chapter_list.clear()
-        if not os.path.exists(txt_path):
-            return
-        try:
-            with open(txt_path, "r", encoding="utf-8") as f:
-                lines = f.readlines()
-            temp = {}
-            for line in lines:
-                line = line.strip()
-                if line.startswith("CHAPTER") and "=" in line and "NAME" not in line:
-                    key, value = line.split("=", 1)
-                    num = key[7:9]
-                    temp[num] = {"time_str": value, "name": None}
-                elif line.startswith("CHAPTER") and "NAME=" in line:
-                    key, value = line.split("=", 1)
-                    num = key[7:9]
-                    if num in temp:
-                        temp[num]["name"] = value
-            keys_sorted = sorted(temp.keys())
-            for idx, k in enumerate(keys_sorted, start=1):
-                t = temp[k]
-                ms = self.parse_chapter_time(t["time_str"])
-                name = t["name"] if t["name"] is not None else f"Chapter {idx}"
-                self.chapters.append({"name": name, "time_ms": ms})
-                display_time = self.ms_to_chapter_time(ms)
-                self.chapter_list.addItem(f"{display_time} - {name}")
-        except Exception as e:
-            self.safe_set_status(f"无法读取章节TXT: {e}")
-
-    def parse_chapter_time(self, line):
-        try:
-            if "." in line:
-                hhmmss, ms = line.split(".")
-                ms = int(ms)
-            else:
-                hhmmss = line
-                ms = 0
-            h, m, s = map(int, hhmmss.split(":"))
-            total_ms = ((h * 60 + m) * 60 + s) * 1000 + ms
-            return total_ms
-        except Exception:
-            return 0
-
-    def update_chapters_txt(self):
-        # 清理上一个视频的 TXT 文件
-        if hasattr(self, 'previous_video_path') and self.previous_video_path and self.previous_video_path != self.video_path:
-            old_base = os.path.splitext(os.path.basename(self.previous_video_path))[0]
-            old_dir = os.path.dirname(self.previous_video_path)
-            old_txt = os.path.join(old_dir, f"{old_base}_chapters.txt")
-            if os.path.isfile(old_txt):
-                try:
-                    os.remove(old_txt)
-                    print(f"已删除旧章节文件: {old_txt}")
-                except Exception as e:
-                    print(f"删除旧章节文件失败: {e}")
-
-        # 更新 previous_video_path
-        self.previous_video_path = self.video_path
-
-        if not self.video_path or not self.chapters:
-            return
-
-        # 按时间升序排序章节
-        self.chapters.sort(key=lambda c: c["time_ms"])
-
-        base_name = os.path.splitext(os.path.basename(self.video_path))[0]
-        txt_path = os.path.join(os.path.dirname(self.video_path), f"{base_name}_chapters.txt")
-        try:
-            self.chapter_list.clear()
-            # 先清空TXT文件
-            with open(txt_path, "w", encoding="utf-8"):
-                pass
-            # 逐一写入章节（顺序编号，固定两位数字）
-            for idx, c in enumerate(self.chapters, start=1):
-                ms_total = c["time_ms"]
-                h, rem = divmod(ms_total // 1000, 3600)
-                m, s = divmod(rem, 60)
-                ms_rem = ms_total % 1000
-                time_str = f"{h:02}:{m:02}:{s:02}.{ms_rem:03}"
-                with open(txt_path, "a", encoding="utf-8") as f:
-                    f.write(f"CHAPTER{idx:02}={time_str}\n")
-                    f.write(f"CHAPTER{idx:02}NAME={c['name']}\n")
-                self.chapter_list.addItem(f"{idx:02}. {time_str} - {c['name']}")
-        except Exception as e:
-            self.safe_set_status(f"保存章节TXT失败: {e}")
+        display_list = self.chapter_manager.get_display_list()
+        for item_text in display_list:
+            self.chapter_list.addItem(item_text)
 
     def add_chapter(self):
         if not self.video_path:
             self.safe_set_status("请先加载视频！")
             return
+        
         current_time = self.video_player.player.position()
-        name = f"Chapter {len(self.chapters)+1}"  # 原始名称
-        self.chapters.append({"name": name, "time_ms": current_time})
-        self.update_chapters_txt()  # 自动刷新显示为 01, 02...
-        self.safe_set_status(f"已添加章节：{name}")
+        
+        # 使用章节管理器添加章节
+        if self.chapter_manager.add_chapter("", current_time):
+            self.safe_set_status("已添加章节")
+        else:
+            QMessageBox.warning(self, "提示", "该时间点附近已存在章节！")
 
     def delete_chapter(self):
         selected_rows = [self.chapter_list.row(item) for item in self.chapter_list.selectedItems()]
         if not selected_rows:
             QMessageBox.warning(self, "提示", "请先选择要删除的章节。")
             return
-        # 删除章节时，按索引从大到小删除，避免索引混乱
-        selected_rows.sort(reverse=True)
-        for row in selected_rows:
-            self.chapters.pop(row)
-            self.chapter_list.takeItem(row)
-        # 自动选择上一个或下一个章节
-        if selected_rows[0] < len(self.chapters):
-            self.chapter_list.setCurrentRow(selected_rows[0])
-        elif len(self.chapters) > 0:
-            self.chapter_list.setCurrentRow(len(self.chapters)-1)
-        # 更新 TXT 刷新显示
-        self.update_chapters_txt()
+        
+        # 确认删除
+        if len(selected_rows) > 1:
+            reply = QMessageBox.question(
+                self, "确认删除", 
+                f"确定要删除选中的 {len(selected_rows)} 个章节吗？",
+                QMessageBox.Yes | QMessageBox.No
+            )
+            if reply != QMessageBox.Yes:
+                return
+        
+        # 使用章节管理器删除章节
+        deleted_count = self.chapter_manager.remove_chapters(selected_rows)
+        self.safe_set_status(f"已删除 {deleted_count} 个章节")
 
     def jump_to_chapter(self, item):
         row = self.chapter_list.row(item)
-        chapter = self.chapters[row]
-        self.video_player.player.setPosition(chapter["time_ms"])
-        self.video_player.player.play()
+        chapters = self.chapter_manager.chapters
+        if 0 <= row < len(chapters):
+            chapter = chapters[row]
+            self.video_player.player.setPosition(chapter.time_ms)
+            self.video_player.player.play()
+
+    def show_chapter_context_menu(self, pos):
+        """显示章节右键菜单"""
+        item = self.chapter_list.itemAt(pos)
+        if not item:
+            return
+        
+        menu = QMenu(self)
+        
+        rename_action = menu.addAction("✏️ 重命名章节")
+        delete_action = menu.addAction("🗑 删除章节")
+        jump_action = menu.addAction("▶ 跳转到此章节")
+        
+        action = menu.exec(self.chapter_list.mapToGlobal(pos))
+        
+        if action == rename_action:
+            self.rename_chapter_at_row(self.chapter_list.row(item))
+        elif action == delete_action:
+            self.delete_chapter()
+        elif action == jump_action:
+            self.jump_to_chapter(item)
+
+
+
+    def rename_chapter_at_row(self, row):
+        """重命名指定行的章节"""
+        chapters = self.chapter_manager.chapters
+        if 0 <= row < len(chapters):
+            old_name = chapters[row].name
+            new_name, ok = QInputDialog.getText(
+                self, "重命名章节", "请输入新的章节名称:", text=old_name
+            )
+            if ok and new_name.strip():
+                if self.chapter_manager.rename_chapter(row, new_name.strip()):
+                    self.safe_set_status(f"章节已重命名为: {new_name.strip()}")
+                else:
+                    self.safe_set_status("重命名失败")
+
+    def on_chapters_changed(self):
+        """章节发生变化时的回调"""
+        self.update_chapter_display()
 
     def save_chapters_to_video(self):
-        if not self.video_path or not self.chapters:
+        if not self.video_path or not self.chapter_manager.chapters:
             self.safe_set_status("请先加载视频并添加章节！")
             return
-        self.update_chapters_txt()
+        
+        # 确保章节文件是最新的
+        self.chapter_manager.save_to_txt()
+        
         try:
             write_chapters(self.video_path)
             self.safe_set_status(f"章节写入完成: {os.path.basename(self.video_path)}")
@@ -1011,8 +924,14 @@ class MainWindow(QMainWindow):
         pos = self.video_player.player.position()
         dur = self.video_player.player.duration()
         if dur > 0:
-            self.progress_slider.setValue(int((pos / dur) * 1000))
-            self.current_time_label.setText(self.format_time(pos))
+            new_value = int((pos / dur) * 1000)
+            # 只在值发生变化时更新，减少不必要的UI刷新
+            if self.progress_slider.value() != new_value:
+                self.progress_slider.setValue(new_value)
+            
+            new_time_text = self.format_time(pos)
+            if self.current_time_label.text() != new_time_text:
+                self.current_time_label.setText(new_time_text)
 
     def format_time(self, ms):
         s = int(ms / 1000)
