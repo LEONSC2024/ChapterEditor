@@ -1,5 +1,7 @@
 # 🎬 MP4/MKV 章节编辑器
-<img src="/Users/lige/Downloads/wechat_2025-10-23_204011_125.jpg"/>
+
+![wechat_2025-10-23_204011_125](https://github.com/user-attachments/assets/602e8c30-cc10-4e7f-b7b7-6e6ab87a12f5)
+
 
 一个现代化的跨平台桌面应用程序，用于编辑MP4和MKV视频文件的章节信息。
 
